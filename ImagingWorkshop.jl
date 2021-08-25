@@ -73,16 +73,21 @@ function main(shift=false)
     reduced = [(rawImgs[i] .- darkMaster)./normFlatMaster for i=1:length(rawImgs)]
     println("Data reduced -- now working on making a picture!")
     #match indices to reduced arrays
-    i=1; rInd = nothing; gInd = nothing; bInd = nothing; cInd = nothing
+    i=1; rInd = nothing; gInd = nothing; bInd = nothing; cInd = nothing; otherFilters=[]
     for filter in df.filter
-        if filter == "Clear"
-            cInd = i
-        elseif filter == "Red"
-            rInd = i
-        elseif filter == "Green"
-            gInd = i
-        elseif filter == "Blue"
-            bInd = i
+        if i ∉ biasInds && i ∉ flatInds && i ∉ darkInds
+            if filter == "Clear"
+                cInd = i
+            elseif filter == "Red"
+                rInd = i
+            elseif filter == "Green"
+                gInd = i
+            elseif filter == "Blue"
+                bInd = i
+            else 
+                println("Detected non RGB filter: $filter with exposure time $(df.exposure[i])s -- adding it to list of potential substitutions")
+                push!(otherFilters,(filter,i))
+            end
         end
         i+=1
     end
@@ -118,6 +123,31 @@ function main(shift=false)
     r,g,b = nothing, nothing, nothing
     if rInd != nothing && gInd != nothing && bInd != nothing
         r,g,b = reduced[rInd],reduced[gInd],reduced[bInd]
+    else
+        println("I don't have complete r,g,b set.")
+        if length(otherFilters)>0
+            println("I have these other filters available as substitutions:")
+            count = 1
+            for tup in otherFilters
+                f,ind = tup
+                println("$count: $filter")
+                count+=1
+            end
+            if rInd == nothing
+                print("Missing red filter -- select the number corresponding to filter in list above you would like to use to replace it (must be integer): ")
+                tupInd = tryparse(Int64,readline())
+                f,rInd = otherFilters[i]
+            elseif gInd == nothing
+                print("Missing green filter -- select the number corresponding to filter in list above you would like to use to replace it (must be integer): ")
+                tupInd = tryparse(Int64,readline())
+                f,gInd = otherFilters[i]
+            elseif bInd == nothing
+                print("Missing blue filter -- select the number corresponding to filter in list above you would like to use to replace it (must be integer): ")
+                tupInd = tryparse(Int64,readline())
+                f,bInd = otherFilters[i]
+            end
+            r,g,b = reduced[rInd],reduced[gInd],reduced[bInd]
+        end
     end
     C = reduced[cInd]
     if r != nothing
@@ -136,8 +166,8 @@ function main(shift=false)
                 end
             end
         end
-        newImg = newImg./(maximum(newImg)/30) #this controls the "exposure" -- /100 for overexposure to see galaxy
-        rgbCube = reverse(newImg,dims=2) #reverse it? yes, this works and matches orientation of "real" pictures (fixes y direction)
+        img = newImg./(maximum(newImg)/30) #this controls the "exposure" -- /100 for overexposure to see galaxy
+        rgbCube = reverse(img,dims=2) #reverse it? yes, this works and matches orientation of "real" pictures (fixes y direction)
         shape = size(rgbCube) #get the shape
         rgbCube = vec(rgbCube) #unravel it
         rgbCube[rgbCube.<0.0] .= 0.0; rgbCube[rgbCube.>1.0] .= 1.0 #make sure all the values are between 0 and 1
@@ -217,13 +247,33 @@ function main(shift=false)
                     end
                 end
             end
-            newImg = newImg./(maximum(newImg)/30)
-            rgbCube = reverse(newImg,dims=2) #reverse it? yes, this works and matches orientation of "real" pictures (fixes y direction)
+            satSample = [1,10,25,50,100,200]
+            for sat in satSample
+                img = newImg./(maximum(newImg)/sat)
+                rgbCube = reverse(img,dims=2) #reverse it? yes, this works and matches orientation of "real" pictures (fixes y direction)
+                shape = size(rgbCube)
+                rgbCube = vec(rgbCube)
+                rgbCube[rgbCube.<0.0] .= 0.0; rgbCube[rgbCube.>1.0] .= 1.0
+                rgbCube = reshape(rgbCube,shape)
+                save("RGB_sat_$sat.png",colorview(RGB,rgbCube)) #save the picture
+            end
+            p=plot(layout=grid(2,3),size=(1920,1080),showaxis=false)
+            for i=1:length(satSample)
+                img = FileIO.load("RGB_sat_$(satSample[i]).png")
+                plot!(p[i],img,title="Saturation = $(satSample[i])",showaxis=false,xticks=false,yticks=false)
+            end
+            display(p)
+            print("Select saturation level using samples below (must be integer): ")
+            sat = tryparse(Int64,readline())
+            foreach(rm,["RGB_sat_$s.png" for s in satSample]) #clean up files
+            println("Making final image -- saving as RBG_FINAL_sat_$sat.png")
+            img = newImg./(maximum(newImg)/sat)
+            rgbCube = reverse(img,dims=2) #reverse it? yes, this works and matches orientation of "real" pictures (fixes y direction)
             shape = size(rgbCube)
             rgbCube = vec(rgbCube)
             rgbCube[rgbCube.<0.0] .= 0.0; rgbCube[rgbCube.>1.0] .= 1.0
             rgbCube = reshape(rgbCube,shape)
-            save("RGB.png",colorview(RGB,rgbCube)) #save the picture
+            save("RGB_Final_sat_$sat.png",colorview(RGB,rgbCube)) #save the picture
         end
     else
         println("Could not detect r,g,b channels -- making a B&W image.")
